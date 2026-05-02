@@ -1,0 +1,87 @@
+{
+  "entities": {
+    "Property": {
+      "title": "Property",
+      "description": "A physical asset managed by the agent",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Display name of the property" },
+        "address": { "type": "string", "description": "Full street address" },
+        "type": { "type": "string", "enum": ["HOUSE", "FLAT", "BUSINESS"], "description": "Category of the property" },
+        "managerId": { "type": "string", "description": "UID of the managing agent" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "address", "type", "managerId"]
+    },
+    "Tenant": {
+      "title": "Tenant",
+      "description": "A person or business renting a property",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "managerId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "email", "managerId"]
+    },
+    "Lease": {
+      "title": "Lease",
+      "description": "An agreement between a manager and a tenant for a property",
+      "type": "object",
+      "properties": {
+        "propertyId": { "type": "string" },
+        "tenantId": { "type": "string" },
+        "rentAmount": { "type": "number" },
+        "startDate": { "type": "string", "format": "date" },
+        "endDate": { "type": "string", "format": "date" },
+        "managerId": { "type": "string" },
+        "status": { "type": "string", "enum": ["ACTIVE", "TERMINATED", "EXPIRED"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "reminderLeadTimes": { "type": "array", "items": { "type": "number" } }
+      },
+      "required": ["propertyId", "tenantId", "rentAmount", "startDate", "endDate", "managerId"]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "A specific rent payment record",
+      "type": "object",
+      "properties": {
+        "leaseId": { "type": "string" },
+        "propertyId": { "type": "string" },
+        "tenantId": { "type": "string" },
+        "amount": { "type": "number" },
+        "dueDate": { "type": "string", "format": "date" },
+        "paidAt": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["PENDING", "PAID", "OVERDUE"] },
+        "managerId": { "type": "string" }
+      },
+      "required": ["leaseId", "propertyId", "tenantId", "amount", "dueDate", "status", "managerId"]
+    },
+    "ReminderLog": {
+      "title": "ReminderLog",
+      "description": "Log of sent email reminders",
+      "type": "object",
+      "properties": {
+        "leaseId": { "type": "string" },
+        "paymentId": { "type": "string" },
+        "tenantId": { "type": "string" },
+        "managerId": { "type": "string" },
+        "leadTimeDays": { "type": "number" },
+        "sentAt": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["SENT", "FAILED", "PENDING"] },
+        "recipientEmail": { "type": "string" }
+      },
+      "required": ["leaseId", "paymentId", "tenantId", "managerId", "sentAt", "status"]
+    }
+  },
+  "firestore": {
+    "properties": { "schema": "Property", "description": "Managed properties" },
+    "tenants": { "schema": "Tenant", "description": "Tenant directory" },
+    "leases": { "schema": "Lease", "description": "Active and past lease agreements" },
+    "payments": { "schema": "Payment", "description": "Rent payment history and schedule" },
+    "reminders": { "schema": "ReminderLog", "description": "Audit trail of sent reminders" }
+  }
+}

@@ -1,0 +1,134 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 0. Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helper Primitives ---
+    function isSignedIn() { return request.auth != null; }
+    function isVerified() { return isSignedIn() && request.auth.token.email_verified == true; }
+    function isManager(managerId) { return isSignedIn() && request.auth.uid == managerId; }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    
+    // --- Validation Blueprints ---
+
+    function isValidProperty(data) {
+      return data.keys().hasAll(['name', 'address', 'type', 'managerId'])
+        && data.keys().size() >= 4
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 200
+        && data.address is string && data.address.size() > 0 && data.address.size() <= 500
+        && data.type in ['HOUSE', 'FLAT', 'BUSINESS']
+        && data.managerId == request.auth.uid;
+    }
+
+    function isValidTenant(data) {
+      return data.keys().hasAll(['name', 'email', 'managerId'])
+        && data.keys().size() >= 3
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 200
+        && data.email is string && data.email.size() > 0 && data.email.size() <= 200
+        && (!data.keys().hasAny(['phone']) || (data.phone is string && data.phone.size() <= 64))
+        && (!data.keys().hasAny(['address']) || (data.address is string && data.address.size() <= 512))
+        && data.managerId == request.auth.uid;
+    }
+
+    function isValidLease(data) {
+      return data.keys().hasAll(['propertyId', 'tenantId', 'rentAmount', 'startDate', 'endDate', 'managerId', 'status', 'reminderLeadTimes'])
+        && data.keys().size() >= 8
+        && isValidId(data.propertyId)
+        && isValidId(data.tenantId)
+        && data.rentAmount is number && data.rentAmount >= 0
+        && data.startDate is string && data.endDate is string
+        && data.endDate > data.startDate
+        && data.status in ['ACTIVE', 'TERMINATED', 'EXPIRED']
+        && data.reminderLeadTimes is list
+        && data.managerId == request.auth.uid;
+    }
+
+    function isValidReminder(data) {
+      return data.keys().hasAll(['leaseId', 'paymentId', 'tenantId', 'managerId', 'leadTimeDays', 'sentAt', 'status', 'recipientEmail'])
+        && data.keys().size() >= 8
+        && isValidId(data.leaseId)
+        && isValidId(data.paymentId)
+        && isValidId(data.tenantId)
+        && data.managerId == request.auth.uid
+        && data.leadTimeDays is number
+        && data.sentAt is string
+        && data.status in ['SENT', 'FAILED', 'PENDING']
+        && data.recipientEmail is string;
+    }
+
+    function isValidPayment(data) {
+      return data.keys().hasAll(['leaseId', 'propertyId', 'tenantId', 'amount', 'dueDate', 'status', 'managerId'])
+        && data.keys().size() >= 7
+        && isValidId(data.leaseId)
+        && data.amount is number && data.amount >= 0
+        && data.dueDate is string
+        && data.status in ['PENDING', 'PAID', 'OVERDUE']
+        && data.managerId == request.auth.uid;
+    }
+
+    // --- Collection Matches ---
+
+    match /properties/{propertyId} {
+      allow get: if isValidId(propertyId) && isManager(existing().managerId);
+      allow list: if isSignedIn() && resource.data.managerId == request.auth.uid;
+      allow create: if isVerified() && isValidId(propertyId) && isValidProperty(incoming());
+      allow update: if isValidId(propertyId) && isManager(existing().managerId) 
+        && isValidProperty(incoming())
+        && incoming().managerId == existing().managerId;
+      allow delete: if isValidId(propertyId) && isManager(existing().managerId);
+    }
+
+    match /tenants/{tenantId} {
+      allow get: if isValidId(tenantId) && isManager(existing().managerId);
+      allow list: if isSignedIn() && resource.data.managerId == request.auth.uid;
+      allow create: if isVerified() && isValidId(tenantId) && isValidTenant(incoming());
+      allow update: if isValidId(tenantId) && isManager(existing().managerId) 
+        && isValidTenant(incoming())
+        && incoming().managerId == existing().managerId;
+      allow delete: if isValidId(tenantId) && isManager(existing().managerId);
+    }
+
+    match /leases/{leaseId} {
+      allow get: if isValidId(leaseId) && isManager(existing().managerId);
+      allow list: if isSignedIn() && resource.data.managerId == request.auth.uid;
+      allow create: if isVerified() && isValidId(leaseId) && isValidLease(incoming())
+        && exists(/databases/$(database)/documents/properties/$(incoming().propertyId))
+        && exists(/databases/$(database)/documents/tenants/$(incoming().tenantId));
+      allow update: if isValidId(leaseId) && isManager(existing().managerId) 
+        && isValidLease(incoming())
+        && incoming().managerId == existing().managerId
+        && (
+          // Action: Status Update
+          (incoming().diff(existing()).affectedKeys().hasOnly(['status'])) ||
+          // Action: Full Edit
+          (incoming().diff(existing()).affectedKeys().hasOnly(['rentAmount', 'endDate', 'status', 'reminderLeadTimes']))
+        );
+      allow delete: if isValidId(leaseId) && isManager(existing().managerId);
+    }
+
+    match /payments/{paymentId} {
+      allow get: if isValidId(paymentId) && isManager(existing().managerId);
+      allow list: if isSignedIn() && resource.data.managerId == request.auth.uid;
+      allow create: if isVerified() && isValidId(paymentId) && isValidPayment(incoming())
+        && exists(/databases/$(database)/documents/leases/$(incoming().leaseId));
+      allow update: if isValidId(paymentId) && isManager(existing().managerId) 
+        && isValidPayment(incoming())
+        && incoming().managerId == existing().managerId
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'paidAt']);
+      allow delete: if isValidId(paymentId) && isManager(existing().managerId);
+    }
+
+    match /reminders/{reminderId} {
+      allow get: if isValidId(reminderId) && isManager(existing().managerId);
+      allow list: if isSignedIn() && resource.data.managerId == request.auth.uid;
+      allow create: if isVerified() && isValidId(reminderId) && isValidReminder(incoming());
+      allow delete: if isValidId(reminderId) && isManager(existing().managerId);
+    }
+  }
+}
